@@ -1,0 +1,19 @@
+# Frontend .dockerignore
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.pnpm-debug.log*
+.next/
+out/
+build/
+dist/
+.DS_Store
+*.tsbuildinfo
+.env*.local
+.vercel
+.git/
+README.md
+Dockerfile
+.dockerignore

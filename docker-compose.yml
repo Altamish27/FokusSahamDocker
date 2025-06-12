@@ -1,0 +1,45 @@
+services:
+  backend:
+    build:
+      context: ./Backend
+      dockerfile: Dockerfile
+    container_name: fokus-saham-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - MONGODB_URI=mongodb://host.docker.internal:27017/fokus_saham
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      - PYTHONUNBUFFERED=1
+    networks:
+      - fokus-saham-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+  frontend:
+    build:
+      context: "./Fokus Saham"
+      dockerfile: Dockerfile
+    container_name: fokus-saham-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://localhost:5000
+      - NEXT_TELEMETRY_DISABLED=1
+    networks:
+      - fokus-saham-network
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  fokus-saham-network:
+    driver: bridge
