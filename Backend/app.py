@@ -11,46 +11,40 @@ CORS(app)  # Mengaktifkan CORS untuk aplikasi React
 # Mengaktifkan logging untuk debug
 logging.basicConfig(level=logging.DEBUG)
 
-# Koneksi ke MongoDB dengan environment variable support
-mongodb_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
-client = MongoClient(mongodb_uri)  # Koneksi ke MongoDB
-db = client["stock_data"]  # Menggunakan database "stock_data"
+# Koneksi ke MongoDB - menggunakan environment variable atau fallback ke localhost
+MONGODB_URI = os.getenv('MONGODB_URI', 'mongodb://localhost:27017')
+DATABASE_NAME = os.getenv('DATABASE_NAME', 'stock_data')
+
+try:
+    client = MongoClient(MONGODB_URI)
+    # Test the connection
+    client.admin.command('ping')
+    db = client[DATABASE_NAME]
+    logging.info(f"Successfully connected to MongoDB at {MONGODB_URI}")
+    logging.info(f"Using database: {DATABASE_NAME}")
+except Exception as e:
+    logging.error(f"Failed to connect to MongoDB: {str(e)}")
+    logging.error(f"Attempted to connect to: {MONGODB_URI}")
+    # You might want to exit here or handle the error appropriately
+    raise e
 
 
-@app.route('/api/beritaUmum', methods=['GET'])
-def get_berita_umum():
-    """Get financial statement data for Q4 2024"""
+@app.route('/api/iqplusBerita', methods=['GET'])
+def get_berita():
+    """Get news data from iqplusBerita collection"""
     try:
-        collection = db["dataUmum"]
+        collection = db["iqplusBerita"]
         data = collection.find({}, {"_id": 0})
         
         # Convert cursor to list and return as JSON
         result = list(data)
         if not result:
-            return jsonify({"error": "No financial statement data found"}), 404
+            return jsonify({"error": "No news data found"}), 404
             
         return jsonify(result)
         
     except Exception as e:
-        logging.error(f"Error fetching financial statement data: {str(e)}")
-        return jsonify({"error": "Internal server error"}), 500
-
-@app.route('/api/beritaTicker', methods=['GET'])
-def get_berita_ticker():
-    """Get financial statement data for Q4 2024"""
-    try:
-        collection = db["beritaTicker"]
-        data = collection.find({}, {"_id": 0})
-        
-        # Convert cursor to list and return as JSON
-        result = list(data)
-        if not result:
-            return jsonify({"error": "No financial statement data found"}), 404
-            
-        return jsonify(result)
-        
-    except Exception as e:
-        logging.error(f"Error fetching financial statement data: {str(e)}")
+        logging.error(f"Error fetching news data: {str(e)}")
         return jsonify({"error": "Internal server error"}), 500
 
 
@@ -95,7 +89,7 @@ def get_lapkeu_q2():
 @app.route('/api/lapkeuQ3/2024', methods=['GET'])
 def get_lapkeu_q3():
     """Get financial statement data for Q4 2024"""
-    try:
+    try:    
         collection = db["lapkeu2024q3"]
         data = collection.find({}, {"_id": 0})
         
@@ -163,6 +157,26 @@ def get_stock_data_yearly(ticker, column):
     return get_stock_data(collection, ticker, column)
 
 
+# API untuk mengambil semua data saham berdasarkan emiten (tanpa filter kolom)
+@app.route('/api/daily/<ticker>', methods=['GET'])
+def get_all_stock_data_daily(ticker):
+    logging.debug(f"Request received for all daily data: ticker={ticker}")
+    collection = db["daily_aggregation_ticker"]
+    return get_all_stock_data(collection, ticker)
+
+@app.route('/api/monthly/<ticker>', methods=['GET'])
+def get_all_stock_data_monthly(ticker):
+    logging.debug(f"Request received for all monthly data: ticker={ticker}")
+    collection = db["monthly_aggregation_ticker"]
+    return get_all_stock_data(collection, ticker)
+
+@app.route('/api/yearly/<ticker>', methods=['GET'])
+def get_all_stock_data_yearly(ticker):
+    logging.debug(f"Request received for all yearly data: ticker={ticker}")
+    collection = db["yearly_aggregation_ticker"]
+    return get_all_stock_data(collection, ticker)
+
+
 # Fungsi untuk mengambil data saham berdasarkan emiten dan kolom yang diminta
 def get_stock_data(collection, ticker, column):
     # Debug log untuk memeriksa koleksi yang digunakan
@@ -197,6 +211,45 @@ def get_stock_data(collection, ticker, column):
     return jsonify(stock_data)  # Mengembalikan data dalam format JSON
 
 
+# Fungsi untuk mengambil semua data saham berdasarkan emiten
+def get_all_stock_data(collection, ticker):
+    logging.debug(f"Accessing collection: {collection.name} for ticker {ticker} (all columns)")
+    
+    # Mengambil semua data untuk ticker tanpa filter kolom
+    data = collection.find({"ticker": ticker}, {"_id": 0})
+    
+    # Menangani kasus ketika data kosong atau tidak ada yang ditemukan
+    if collection.count_documents({"ticker": ticker}) == 0:
+        logging.warning(f"Ticker {ticker} not found in collection {collection.name}")
+        abort(404, description="Ticker not found")
+    
+    # Mengkonversi cursor ke list
+    stock_data = list(data)
+    
+    logging.debug(f"All data retrieved for {ticker}: {len(stock_data)} records")
+    return jsonify(stock_data)
+
+
+# Health check endpoint for Docker
+@app.route('/', methods=['GET'])
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for Docker healthcheck"""
+    try:
+        # Test MongoDB connection
+        client.admin.command('ping')
+        return jsonify({
+            "status": "healthy",
+            "database": DATABASE_NAME,
+            "mongodb_uri": MONGODB_URI.split('@')[-1] if '@' in MONGODB_URI else MONGODB_URI  # Hide credentials
+        }), 200
+    except Exception as e:
+        logging.error(f"Health check failed: {str(e)}")
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e)
+        }), 503
+
 # Menangani kesalahan 404 jika ticker tidak ditemukan
 @app.errorhandler(404)
 def not_found_error(error):
@@ -210,7 +263,10 @@ def handle_generic_error(error):
     return jsonify({"error": "An unexpected error occurred"}), 500
 
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)  # Menjalankan aplikasi Flask
+    # Development mode
+    app.run(debug=True, host='0.0.0.0', port=5000)
+else:
+    # Production mode (when run with gunicorn or similar)
+    logging.info("Running in production mode")
 
-    
+

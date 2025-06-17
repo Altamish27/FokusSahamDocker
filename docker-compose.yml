@@ -7,7 +7,8 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - MONGODB_URI=mongodb://host.docker.internal:27017/fokus_saham
+      - MONGODB_URI=mongodb://host.docker.internal:27017
+      - DATABASE_NAME=stock_data
       - FLASK_ENV=production
       - FLASK_DEBUG=0
       - PYTHONUNBUFFERED=1

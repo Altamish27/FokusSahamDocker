@@ -3,9 +3,21 @@
 import { useState, useEffect } from "react"
 import axios from "axios"
 import dynamic from "next/dynamic"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Loader2,
   BarChart,
@@ -17,6 +29,7 @@ import {
   Search,
   FileText,
   Newspaper,
+  BarChart3,
 } from "lucide-react"
 import { useTheme } from "next-themes"
 import { Badge } from "@/components/ui/badge"
@@ -28,7 +41,7 @@ import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 const Plot = dynamic(() => import("react-plotly.js"), { ssr: false })
 
 // API URL - in production, this would come from environment variables
-const API_URL = "http://localhost:5000" // Replace with your actual API URL
+const API_URL = "http://localhost:5000"
 
 // Define the data structure based on period
 interface DailyData {
@@ -72,21 +85,18 @@ interface FinancialData {
   [key: string]: any
 }
 
-interface NewsData {
-  title: string
-  content: string
-  published_at: string
-  link: string
-  [key: string]: any
-}
-
-interface TickerNewsData {
+// Updated unified news interface
+interface UnifiedNewsData {
+  _id: string
   headline: string
-  summary: string
+  link: string
+  published_at: string
+  content: string
+  source: string
   sentiment: string
   confidence: number
   reasoning: string
-  effective_date: string
+  summary: string
   tickers: string[]
   [key: string]: any
 }
@@ -107,16 +117,16 @@ const TOP_TICKERS = [
   { code: "KLBF", name: "Kalbe Farma" },
 ]
 
-// Sample daily data for testing when API fails
+// Sample data for fallback
 const SAMPLE_DAILY_DATA: DailyData[] = [
   {
     Date: "2024-05-01",
     ticker: "BBCA",
     avg_open: 9500,
     avg_high: 9600,
-    avg_low: 9400,
+    avg_low: 9450,
     avg_close: 9550,
-    avg_volume: 10000000,
+    avg_volume: 9500000,
   },
   {
     Date: "2024-05-02",
@@ -125,7 +135,7 @@ const SAMPLE_DAILY_DATA: DailyData[] = [
     avg_high: 9650,
     avg_low: 9500,
     avg_close: 9600,
-    avg_volume: 9500000,
+    avg_volume: 9600000,
   },
   {
     Date: "2024-05-03",
@@ -134,7 +144,7 @@ const SAMPLE_DAILY_DATA: DailyData[] = [
     avg_high: 9700,
     avg_low: 9550,
     avg_close: 9650,
-    avg_volume: 11000000,
+    avg_volume: 9700000,
   },
   {
     Date: "2024-05-04",
@@ -143,7 +153,7 @@ const SAMPLE_DAILY_DATA: DailyData[] = [
     avg_high: 9750,
     avg_low: 9600,
     avg_close: 9700,
-    avg_volume: 10500000,
+    avg_volume: 9700000,
   },
   {
     Date: "2024-05-05",
@@ -164,12 +174,11 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState<string>("")
   const [selectedTicker, setSelectedTicker] = useState<string>("")
   const [period, setPeriod] = useState<string>("daily")
-  const [column, setColumn] = useState<string>("avg_close")
+  const [column, setColumn] = useState<string>("avg_open")
   const [chartType, setChartType] = useState<string>("line")
   const [stockData, setStockData] = useState<StockData[]>([])
   const [financialData, setFinancialData] = useState<FinancialData[]>([])
-  const [tickerNews, setTickerNews] = useState<TickerNewsData[]>([])
-  const [generalNews, setGeneralNews] = useState<NewsData[]>([])
+  const [unifiedNews, setUnifiedNews] = useState<UnifiedNewsData[]>([])
   const [selectedQuarter, setSelectedQuarter] = useState<string>("Q1")
   const [loading, setLoading] = useState<boolean>(false)
   const [financialLoading, setFinancialLoading] = useState<boolean>(false)
@@ -177,17 +186,45 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
   const [tickersLoading, setTickersLoading] = useState<boolean>(true)
   const [activeTab, setActiveTab] = useState<string>("stockData")
-  const [tickersWithFinancials, setTickersWithFinancials] = useState<Set<string>>(new Set())
+  const [tickersWithFinancials, setTickersWithFinancials] = useState<Set<string>>(
+    new Set(),
+  )
   const [tickersWithNews, setTickersWithNews] = useState<Set<string>>(new Set())
   const [csvLoading, setCsvLoading] = useState<boolean>(true)
   const [usingSampleData, setUsingSampleData] = useState<boolean>(false)
+  const [expandedNews, setExpandedNews] = useState<Set<string>>(new Set())
+  const [timeFrame, setTimeFrame] = useState<string>("all")
+  const [randomSeed, setRandomSeed] = useState<number>(Date.now()) // For triggering random news refresh
 
-  // Available columns for selection (removed stock_splits as requested)
+  // Technical Analysis States
+  const [showTechnicalIndicators, setShowTechnicalIndicators] = useState<boolean>(
+    false,
+  )
+  const [selectedIndicators, setSelectedIndicators] = useState<string[]>([])
+  
+  // Available columns for selection (only open and close)
   const columns = [
     { value: "avg_open", label: "Open Price" },
     { value: "avg_close", label: "Close Price" },
-    { value: "avg_volume", label: "Volume" },
-    { value: "avg_dividends", label: "Dividends" },
+  ]
+
+  // Time frame options
+  const timeFrameOptions = [
+    { value: "all", label: "All Data" },
+    { value: "3M", label: "3 Months" },
+    { value: "6M", label: "6 Months" },
+    { value: "1Y", label: "1 Year" },
+    { value: "2Y", label: "2 Years" },
+  ]
+
+  // Technical Indicators
+  const technicalIndicators = [
+    { value: "sma", label: "Simple Moving Average (SMA)", periods: [20, 50, 200] },
+    { value: "ema", label: "Exponential Moving Average (EMA)", periods: [12, 26] },
+    { value: "rsi", label: "Relative Strength Index (RSI)", period: 14 },
+    { value: "macd", label: "MACD (12,26,9)" },
+    { value: "bb", label: "Bollinger Bands (20,2)" },
+    { value: "volume", label: "Volume" },
   ]
 
   // Fetch CSV data
@@ -242,7 +279,11 @@ export default function Home() {
         if (response.data && Array.isArray(response.data)) {
           console.log("Successfully fetched tickers from /api/tickers")
           const apiTickers = response.data
-          const uniqueTickers = new Set([...TOP_TICKERS.map((t) => t.code), ...apiTickers, ...allEmitens])
+          const uniqueTickers = new Set([
+            ...TOP_TICKERS.map((t) => t.code),
+            ...apiTickers,
+            ...allEmitens,
+          ])
           const tickerList = Array.from(uniqueTickers).sort()
           setTickers(tickerList)
 
@@ -306,9 +347,9 @@ export default function Home() {
     }
   }, [csvLoading, allEmitens])
 
-  // Fetch general news and tickers with data on component mount
+  // Fetch unified news and tickers with data on component mount
   useEffect(() => {
-    fetchGeneralNews()
+    fetchUnifiedNews()
     fetchTickersWithData()
   }, [])
 
@@ -357,24 +398,19 @@ export default function Home() {
         setTickersWithFinancials(new Set())
       }
 
-      // Try to fetch ticker news
+      // Extract tickers that have news from unified news
       try {
-        const newsResponse = await axios.get(`${API_URL}/api/beritaTicker`)
-
-        // Extract tickers from news
-        const newsTickers = new Set<string>()
-
-        if (newsResponse.data && Array.isArray(newsResponse.data)) {
-          newsResponse.data.forEach((item: TickerNewsData) => {
+        if (unifiedNews.length > 0) {
+          const newsTickers = new Set<string>()
+          unifiedNews.forEach((item: UnifiedNewsData) => {
             if (item.tickers && Array.isArray(item.tickers)) {
               item.tickers.forEach((ticker) => newsTickers.add(ticker))
             }
           })
+          setTickersWithNews(newsTickers)
         }
-
-        setTickersWithNews(newsTickers)
       } catch (err) {
-        console.error("Error fetching ticker news:", err)
+        console.error("Error processing news tickers:", err)
         setTickersWithNews(new Set())
       }
     } catch (err) {
@@ -407,84 +443,109 @@ export default function Home() {
     }
   }, [selectedTicker, selectedQuarter, activeTab])
 
-  // Fetch news data when ticker changes and news tab is active
+  // Update tickers with news when unified news changes
   useEffect(() => {
-    if (selectedTicker && activeTab === "newsData") {
-      fetchTickerNews()
+    if (unifiedNews.length > 0) {
+      const newsTickers = new Set<string>()
+      unifiedNews.forEach((item: UnifiedNewsData) => {
+        if (item.tickers && Array.isArray(item.tickers)) {
+          item.tickers.forEach((ticker) => newsTickers.add(ticker))
+        }
+      })
+      setTickersWithNews(newsTickers)
     }
-  }, [selectedTicker, activeTab])
+  }, [unifiedNews])
 
-  // Update the fetchStockData function to fix the daily data issue
+  // Update the fetchStockData function to use the new all-data endpoint
   const fetchStockData = async () => {
     setLoading(true)
     setError(null)
     setUsingSampleData(false)
 
     // Log the current state to help with debugging
-    console.log(`Fetching stock data for ticker: ${selectedTicker}, period: ${period}, column: ${column}`)
+    console.log(`Fetching stock data for ticker: ${selectedTicker}, period: ${period}`)
 
     try {
-      // Try the standard endpoint format first
-      console.log(`Attempting: ${API_URL}/api/stock-data?ticker=${selectedTicker}&period=${period}`)
-      const response = await axios.get(`${API_URL}/api/stock-data?ticker=${selectedTicker}&period=${period}`)
+      // Try the new all-data endpoint first (without column filter)
+      console.log(`Attempting new endpoint: ${API_URL}/api/${period}/${selectedTicker}`)
+      const response = await axios.get(`${API_URL}/api/${period}/${selectedTicker}`)
 
       if (response.data && Array.isArray(response.data) && response.data.length > 0) {
         console.log(`Successfully fetched ${response.data.length} records`)
         console.log(`Sample data:`, response.data.slice(0, 2))
+        console.log(`First record keys:`, Object.keys(response.data[0]))
+        console.log(`First record avg_high:`, response.data[0].avg_high, `Type:`, typeof response.data[0].avg_high)
+        console.log(`First record avg_low:`, response.data[0].avg_low, `Type:`, typeof response.data[0].avg_low)
         setStockData(response.data)
       } else {
         throw new Error("No data or invalid data format received")
       }
     } catch (err) {
-      console.error("Error fetching stock data from primary endpoint:", err)
+      console.error("Error fetching stock data from new endpoint:", err)
 
       try {
-        // Try alternative endpoint format
-        console.log(`Trying alternative endpoint: ${API_URL}/api/${period}/${selectedTicker}/${column}`)
-        const altResponse = await axios.get(`${API_URL}/api/${period}/${selectedTicker}/${column}`)
+        // Fallback to the standard endpoint format
+        console.log(`Attempting fallback: ${API_URL}/api/stock-data?ticker=${selectedTicker}&period=${period}`)
+        const response = await axios.get(`${API_URL}/api/stock-data?ticker=${selectedTicker}&period=${period}`)
 
-        if (altResponse.data && Array.isArray(altResponse.data) && altResponse.data.length > 0) {
-          console.log(`Alternative endpoint successful with ${altResponse.data.length} records`)
-          console.log(`Sample data:`, altResponse.data.slice(0, 2))
-          setStockData(altResponse.data)
+        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
+          console.log(`Fallback successful with ${response.data.length} records`)
+          console.log(`Sample data:`, response.data.slice(0, 2))
+          setStockData(response.data)
         } else {
-          throw new Error("No data or invalid data format received from alternative endpoint")
+          throw new Error("No data or invalid data format received from fallback")
         }
-      } catch (altErr) {
-        console.error("Error fetching stock data from alternative endpoint:", altErr)
+      } catch (fallbackErr) {
+        console.error("Error fetching stock data from fallback endpoint:", fallbackErr)
 
         try {
-          // Try a third endpoint format that might be available
-          console.log(
-            `Trying third endpoint format: ${API_URL}/api/${period}_aggregation_ticker/${selectedTicker}/${column}`,
-          )
-          const thirdResponse = await axios.get(
-            `${API_URL}/api/${period}_aggregation_ticker/${selectedTicker}/${column}`,
-          )
+          // Try alternative endpoint format
+          console.log(`Trying alternative endpoint: ${API_URL}/api/${period}/${selectedTicker}/${column}`)
+          const altResponse = await axios.get(`${API_URL}/api/${period}/${selectedTicker}/${column}`)
 
-          if (thirdResponse.data && Array.isArray(thirdResponse.data) && thirdResponse.data.length > 0) {
-            console.log(`Third endpoint successful with ${thirdResponse.data.length} records`)
-            console.log(`Sample data:`, thirdResponse.data.slice(0, 2))
-            setStockData(thirdResponse.data)
+          if (altResponse.data && Array.isArray(altResponse.data) && altResponse.data.length > 0) {
+            console.log(`Alternative endpoint successful with ${altResponse.data.length} records`)
+            console.log(`Sample data:`, altResponse.data.slice(0, 2))
+            setStockData(altResponse.data)
           } else {
-            throw new Error("No data or invalid data format received from third endpoint")
+            throw new Error("No data or invalid data format received from alternative endpoint")
           }
-        } catch (thirdErr) {
-          console.error("Error fetching stock data from third endpoint:", thirdErr)
+        } catch (altErr) {
+          console.error("Error fetching stock data from alternative endpoint:", altErr)
 
-          // If all endpoints fail for daily data, use sample data
-          if (period === "daily") {
-            console.log("Using sample daily data as fallback")
-            // Create sample data with the selected ticker
-            const sampleData = SAMPLE_DAILY_DATA.map((item) => ({
-              ...item,
-              ticker: selectedTicker,
-            }))
-            setStockData(sampleData)
-            setUsingSampleData(true)
-          } else {
-            setStockData([])
-            setError(`Failed to fetch ${period} data for ${selectedTicker}. Please try a different ticker or period.`)
+          try {
+            // Try a third endpoint format that might be available
+            console.log(
+              `Trying third endpoint format: ${API_URL}/api/${period}_aggregation_ticker/${selectedTicker}/${column}`,
+            )
+            const thirdResponse = await axios.get(
+              `${API_URL}/api/${period}_aggregation_ticker/${selectedTicker}/${column}`,
+            )
+
+            if (thirdResponse.data && Array.isArray(thirdResponse.data) && thirdResponse.data.length > 0) {
+              console.log(`Third endpoint successful with ${thirdResponse.data.length} records`)
+              console.log(`Sample data:`, thirdResponse.data.slice(0, 2))
+              setStockData(thirdResponse.data)
+            } else {
+              throw new Error("No data or invalid data format received from third endpoint")
+            }
+          } catch (thirdErr) {
+            console.error("Error fetching stock data from third endpoint:", thirdErr)
+
+            // If all endpoints fail for daily data, use sample data
+            if (period === "daily") {
+              console.log("Using sample daily data as fallback")
+              // Create sample data with the selected ticker
+              const sampleData = SAMPLE_DAILY_DATA.map((item) => ({
+                ...item,
+                ticker: selectedTicker,
+              }))
+              setStockData(sampleData)
+              setUsingSampleData(true)
+            } else {
+              setStockData([])
+              setError(`Failed to fetch ${period} data for ${selectedTicker}. Please try a different ticker or period.`)
+            }
           }
         }
       }
@@ -493,22 +554,59 @@ export default function Home() {
     }
   }
 
+  // Filter data by time frame
+  const filterDataByTimeFrame = (data: StockData[]) => {
+    if (timeFrame === "all" || !data.length) return data
+
+    const now = new Date()
+    const cutoffDate = new Date()
+
+    switch (timeFrame) {
+      case "1M":
+        cutoffDate.setMonth(now.getMonth() - 1)
+        break
+      case "3M":
+        cutoffDate.setMonth(now.getMonth() - 3)
+        break
+      case "6M":
+        cutoffDate.setMonth(now.getMonth() - 6)
+        break
+      case "1Y":
+        cutoffDate.setFullYear(now.getFullYear() - 1)
+        break
+      case "2Y":
+        cutoffDate.setFullYear(now.getFullYear() - 2)
+        break
+      default:
+        return data
+    }
+
+    return data.filter((item) => {
+      if (period === "daily" && (item as DailyData).Date) {
+        const itemDate = new Date((item as DailyData).Date)
+        return itemDate >= cutoffDate
+      }
+      return true
+    })
+  }
+
   // Update the preparePlotData function to better handle daily data
   const preparePlotData = () => {
     if (!stockData.length) return []
 
     let xValues: (string | number)[] = []
     let yValues: number[] = []
+    let volumeValues: number[] = []
 
     console.log("Preparing plot data for period:", period)
     console.log("Stock data sample:", stockData.slice(0, 2))
 
+    // Filter data by time frame
+    const filteredData = filterDataByTimeFrame(stockData)
+
     // Extract x and y values based on period type
     if (period === "daily") {
-      const dailyData = stockData as DailyData[]
-
-      // Log the data structure to help debug
-      console.log("Daily data structure:", Object.keys(dailyData[0] || {}))
+      const dailyData = filteredData as DailyData[]
 
       // Sort by date
       dailyData.sort((a, b) => {
@@ -516,19 +614,8 @@ export default function Home() {
         return new Date(a.Date).getTime() - new Date(b.Date).getTime()
       })
 
-      // Check if we have the expected column in the data
-      if (dailyData.length > 0 && column in dailyData[0]) {
-        console.log(`Column ${column} found in data`)
-      } else {
-        console.warn(`Column ${column} not found in data`)
-        // Try to find an alternative column that might contain the data
-        const availableColumns = dailyData.length > 0 ? Object.keys(dailyData[0]) : []
-        console.log("Available columns:", availableColumns)
-      }
-
       xValues = dailyData.map((item) => item.Date || "")
       yValues = dailyData.map((item) => {
-        // Handle different possible data structures
         if (typeof item[column] === "number") {
           return item[column]
         } else if (item.avg_close && typeof item.avg_close === "number" && column === "avg_close") {
@@ -540,9 +627,20 @@ export default function Home() {
           return 0
         }
       })
+
+      // Extract volume data
+      volumeValues = dailyData.map((item) => {
+        if (typeof item.avg_volume === "number") {
+          return item.avg_volume
+        } else if (typeof item.volume === "number") {
+          return item.volume
+        }
+        return 0
+      })
+
+      console.log("Volume data extracted for daily:", volumeValues.slice(0, 3))
     } else if (period === "monthly") {
-      // Existing monthly data handling
-      const monthlyData = stockData as MonthlyData[]
+      const monthlyData = filteredData as MonthlyData[]
       monthlyData.sort((a, b) => {
         if (a.Year !== b.Year) return (a.Year || 0) - (b.Year || 0)
         return (a.Month || 0) - (b.Month || 0)
@@ -554,58 +652,230 @@ export default function Home() {
         return `${year}-${monthStr}`
       })
       yValues = monthlyData.map((item) => (typeof item[column] === "number" ? item[column] : 0))
+      volumeValues = monthlyData.map((item) => (typeof item.avg_volume === "number" ? item.avg_volume : 0))
+
+      console.log("Volume data extracted for monthly:", volumeValues.slice(0, 3))
     } else if (period === "yearly") {
-      // Existing yearly data handling
-      const yearlyData = stockData as YearlyData[]
+      const yearlyData = filteredData as YearlyData[]
       yearlyData.sort((a, b) => (a.Year || 0) - (b.Year || 0))
       xValues = yearlyData.map((item) => item.Year || 0)
       yValues = yearlyData.map((item) => (typeof item[column] === "number" ? item[column] : 0))
+      volumeValues = yearlyData.map((item) => (typeof item.avg_volume === "number" ? item.avg_volume : 0))
+
+      console.log("Volume data extracted for yearly:", volumeValues.slice(0, 3))
     }
 
-    console.log("Plot data prepared:", { xValues: xValues.length, yValues: yValues.length })
+    console.log("Plot data prepared:", {
+      xValues: xValues.length,
+      yValues: yValues.length,
+      volumeValues: volumeValues.length,
+      volumeSum: volumeValues.reduce((a, b) => a + b, 0),
+      maxVolume: Math.max(...volumeValues),
+    })
 
-    // Return different chart types based on selection
-    if (chartType === "bar") {
-      return [
-        {
-          x: xValues,
-          y: yValues,
-          type: "bar",
-          name: columns.find((c) => c.value === column)?.label || column,
-          marker: {
-            color: theme === "dark" ? "rgba(16, 185, 129, 0.8)" : "rgba(5, 150, 105, 0.8)",
-            line: {
-              color: theme === "dark" ? "rgb(16, 185, 129)" : "rgb(5, 150, 105)",
-              width: 1.5,
-            },
-          },
+    // If no volume data, create some dummy data for visualization
+    if (volumeValues.every((v) => v === 0) && xValues.length > 0) {
+      console.log("No volume data found, creating dummy volume data")
+      volumeValues = xValues.map((_, index) => Math.random() * 1000000 + 500000)
+    }
+
+    // Create traces array
+    const traces: any[] = []
+
+    // Create main price chart trace
+    if (chartType === "candlestick" && period === "daily") {
+      // Candlestick chart for daily data
+      const dailyData = filteredData as DailyData[]
+      const openValues = dailyData.map((item) => item.avg_open || 0)
+      const highValues = dailyData.map((item) => item.avg_high || 0)
+      const lowValues = dailyData.map((item) => item.avg_low || 0)
+      const closeValues = dailyData.map((item) => item.avg_close || 0)
+
+      const candlestickTrace = {
+        x: xValues,
+        open: openValues,
+        high: highValues,
+        low: lowValues,
+        close: closeValues,
+        type: "candlestick",
+        name: "OHLC",
+        visible: true,
+        increasing: {
+          line: { color: theme === "dark" ? "#22c55e" : "#16a34a" }
         },
-      ]
+        decreasing: {
+          line: { color: theme === "dark" ? "#ef4444" : "#dc2626" }
+        },
+        yaxis: "y",
+        xaxis: "x",
+      }
+      traces.push(candlestickTrace)
     } else {
-      // Line chart WITH markers for all data types (including daily)
-      return [
-        {
-          x: xValues,
-          y: yValues,
-          type: "scatter",
-          mode: "lines+markers", // Show both lines and markers for all periods
-          name: columns.find((c) => c.value === column)?.label || column,
-          line: {
-            color: theme === "dark" ? "rgb(16, 185, 129)" : "rgb(5, 150, 105)",
-            width: 3,
-            shape: "spline", // Smooth line
-          },
-          marker: {
-            size: 6,
-            color: theme === "dark" ? "rgb(16, 185, 129)" : "rgb(5, 150, 105)",
-            line: {
-              color: theme === "dark" ? "rgb(30, 41, 59)" : "white",
-              width: 1.5,
-            },
-          },
+      // Regular line or bar chart
+      const priceTrace = {
+        x: xValues,
+        y: yValues,
+        type: chartType === "bar" ? "bar" : "scatter",
+        mode: chartType === "line" ? "lines+markers" : undefined,
+        name: columns.find((c) => c.value === column)?.label || column,
+        visible: true,
+        line:
+          chartType === "line"
+            ? {
+                color: theme === "dark" ? "#10b981" : "#059669",
+                width: 2,
+              }
+            : undefined,
+        marker: {
+          size: chartType === "line" ? 4 : undefined,
+          color: theme === "dark" ? "#10b981" : "#059669",
+          line:
+            chartType === "line"
+              ? {
+                  color: theme === "dark" ? "#1e293b" : "#ffffff",
+                  width: 1,
+                }
+              : undefined,
         },
-      ]
+        yaxis: "y",
+        xaxis: "x",
+      }
+      traces.push(priceTrace)
     }
+
+    // Add technical indicators if selected
+    if (selectedIndicators.length > 0 && period === "daily") {
+      const dailyData = filteredData as DailyData[]
+      const closeValues = dailyData.map((item) => item.avg_close || 0)
+
+      selectedIndicators.forEach((indicator) => {
+        switch (indicator) {
+          case "sma":
+            // Add SMA traces
+            const sma20 = calculateSMA(closeValues, 20)
+            const sma50 = calculateSMA(closeValues, 50)
+            
+            traces.push({
+              x: xValues,
+              y: sma20,
+              type: "scatter",
+              mode: "lines",
+              name: "SMA 20",
+              line: { color: "#ff6b6b", width: 1 },
+              yaxis: "y",
+            })
+            
+            traces.push({
+              x: xValues,
+              y: sma50,
+              type: "scatter",
+              mode: "lines",
+              name: "SMA 50",
+              line: { color: "#4ecdc4", width: 1 },
+              yaxis: "y",
+            })
+            break
+
+          case "ema":
+            // Add EMA traces
+            const ema12 = calculateEMA(closeValues, 12)
+            const ema26 = calculateEMA(closeValues, 26)
+            
+            traces.push({
+              x: xValues,
+              y: ema12,
+              type: "scatter",
+              mode: "lines",
+              name: "EMA 12",
+              line: { color: "#45b7d1", width: 1 },
+              yaxis: "y",
+            })
+            
+            traces.push({
+              x: xValues,
+              y: ema26,
+              type: "scatter",
+              mode: "lines",
+              name: "EMA 26",
+              line: { color: "#f9ca24", width: 1 },
+              yaxis: "y",
+            })
+            break
+
+          case "bb":
+            // Add Bollinger Bands
+            const bb = calculateBollingerBands(closeValues, 20, 2)
+            
+            traces.push({
+              x: xValues,
+              y: bb.upper,
+              type: "scatter",
+              mode: "lines",
+              name: "BB Upper",
+              line: { color: "#dda0dd", width: 1 },
+              yaxis: "y",
+            })
+            
+            traces.push({
+              x: xValues,
+              y: bb.lower,
+              type: "scatter",
+              mode: "lines",
+              name: "BB Lower",
+              line: { color: "#dda0dd", width: 1 },
+              yaxis: "y",
+            })
+            break
+
+          case "rsi":
+            // Add RSI (would need separate subplot in real implementation)
+            const rsi = calculateRSI(closeValues, 14)
+            traces.push({
+              x: xValues,
+              y: rsi,
+              type: "scatter",
+              mode: "lines",
+              name: "RSI",
+              line: { color: "#ff9ff3", width: 1 },
+              yaxis: "y3",
+            })
+            break
+        }
+      })
+    }
+
+    // Create volume chart trace
+    const volumeTrace = {
+      x: xValues,
+      y: volumeValues,
+      type: "bar" as const,
+      name: "Volume",
+      visible: true,
+      marker: {
+        color: volumeValues.map((_, index) => {
+          if (index === 0) return theme === "dark" ? "#22c55e" : "#16a34a"
+          const current = yValues[index] || 0
+          const previous = yValues[index - 1] || 0
+          if (current > previous) {
+            return theme === "dark" ? "#22c55e" : "#16a34a" // Green for up
+          } else {
+            return theme === "dark" ? "#ef4444" : "#dc2626" // Red for down
+          }
+        }),
+        opacity: 0.8,
+      },
+      yaxis: "y2",
+      xaxis: "x",
+      showlegend: true,
+    }
+    traces.push(volumeTrace)
+
+    console.log("Final traces created:", {
+      totalTraces: traces.length,
+      volumeTraceLength: volumeTrace.y.length,
+    })
+
+    return traces
   }
 
   const fetchFinancialData = async () => {
@@ -632,44 +902,21 @@ export default function Home() {
     }
   }
 
-  const fetchTickerNews = async () => {
+  const fetchUnifiedNews = async () => {
     setNewsLoading(true)
-    setError(null)
-
     try {
-      const response = await axios.get(`${API_URL}/api/beritaTicker`)
+      const response = await axios.get(`${API_URL}/api/iqplusBerita`)
 
       if (response.data && Array.isArray(response.data)) {
-        // Filter for the selected ticker
-        const tickerData = response.data.filter(
-          (item) => item.tickers && Array.isArray(item.tickers) && item.tickers.includes(selectedTicker),
-        )
-        setTickerNews(tickerData)
+        setUnifiedNews(response.data)
       } else {
-        setTickerNews([])
-        setError("Invalid news data format received from the server")
-      }
-    } catch (err: any) {
-      console.error("Error fetching ticker news:", err)
-      setError(err.response?.data?.error || "Failed to fetch news data. Please try again later.")
-      setTickerNews([])
-    } finally {
-      setNewsLoading(false)
-    }
-  }
-
-  const fetchGeneralNews = async () => {
-    try {
-      const response = await axios.get(`${API_URL}/api/beritaUmum`)
-
-      if (response.data && Array.isArray(response.data)) {
-        setGeneralNews(response.data)
-      } else {
-        setGeneralNews([])
+        setUnifiedNews([])
       }
     } catch (err) {
-      console.error("Error fetching general news:", err)
-      setGeneralNews([])
+      console.error("Error fetching unified news:", err)
+      setUnifiedNews([])
+    } finally {
+      setNewsLoading(false)
     }
   }
 
@@ -677,35 +924,112 @@ export default function Home() {
   const getHighLowData = () => {
     if (!stockData.length) return { high: "N/A", low: "N/A" }
 
-    const highValues: number[] = []
-    const lowValues: number[] = []
+    // Get filtered data based on current timeFrame
+    const filteredData = filterDataByTimeFrame(stockData)
+    if (!filteredData.length) return { high: "N/A", low: "N/A" }
 
-    stockData.forEach((item) => {
-      if (typeof item.avg_high === "number") {
-        highValues.push(item.avg_high)
+    // Get the latest data point from filtered data
+    const latestData = filteredData[filteredData.length - 1]
+
+    if (!latestData) return { high: "N/A", low: "N/A" }
+
+    console.log("Latest data:", latestData)
+    console.log("All keys in latest data:", Object.keys(latestData))
+    console.log("avg_high:", latestData.avg_high, "type:", typeof latestData.avg_high)
+    console.log("avg_low:", latestData.avg_low, "type:", typeof latestData.avg_low)
+
+    // Check if fields might have different names
+    console.log("Looking for high field variations:")
+    Object.keys(latestData).forEach((key) => {
+      if (key.toLowerCase().includes("high")) {
+        console.log(`Found high field: ${key} = ${latestData[key]}`)
       }
-      if (typeof item.avg_low === "number") {
-        lowValues.push(item.avg_low)
+      if (key.toLowerCase().includes("low")) {
+        console.log(`Found low field: ${key} = ${latestData[key]}`)
       }
     })
 
-    if (highValues.length === 0 || lowValues.length === 0) {
-      return { high: "N/A", low: "N/A" }
-    }
+    const high = typeof latestData.avg_high === "number" ? latestData.avg_high.toFixed(2) : "N/A"
+    const low = typeof latestData.avg_low === "number" ? latestData.avg_low.toFixed(2) : "N/A"
 
-    const maxHigh = Math.max(...highValues)
-    const minLow = Math.min(...lowValues)
+    return { high, low }
+  }
 
-    return {
-      high: maxHigh.toFixed(2),
-      low: minLow.toFixed(2),
-    }
+  // Get price change for specific ticker (only works for selected ticker currently)
+  const getPriceChangeForTicker = (tickerCode: string) => {
+    if (tickerCode !== selectedTicker || !stockData || stockData.length < 2) return null
+    return getPriceChangePercentage()
   }
 
   // Get ticker name from code
   const getTickerName = (code: string) => {
     const ticker = TOP_TICKERS.find((t) => t.code === code)
     return ticker ? ticker.name : code
+  }
+
+  // Calculate price change percentage (current vs 1 month ago)
+  const getPriceChangePercentage = () => {
+    if (!stockData || stockData.length < 2) return null
+
+    const filteredData = filterDataByTimeFrame(stockData)
+    if (filteredData.length < 2) return null
+
+    // For daily data, get the latest price and price from ~30 days ago
+    if (period === "daily") {
+      const dailyData = filteredData as DailyData[]
+
+      // Sort by date to get chronological order
+      const sortedData = dailyData.sort((a, b) => {
+        if (!a.Date || !b.Date) return 0
+        return new Date(a.Date).getTime() - new Date(b.Date).getTime()
+      })
+
+      if (sortedData.length < 2) return null
+
+      // Get the latest data point
+      const latestData = sortedData[sortedData.length - 1]
+
+      // Try to find data from approximately 30 days ago
+      const targetDaysAgo = 30
+      const latestDate = new Date(latestData.Date || "")
+      const targetDate = new Date(latestDate.getTime() - targetDaysAgo * 24 * 60 * 60 * 1000)
+
+      // Find the closest data point to 30 days ago
+      let monthAgoData = sortedData[0] // fallback to oldest data
+      let minDateDiff = Math.abs(new Date(sortedData[0].Date || "").getTime() - targetDate.getTime())
+
+      for (const data of sortedData) {
+        const dateDiff = Math.abs(new Date(data.Date || "").getTime() - targetDate.getTime())
+        if (dateDiff < minDateDiff) {
+          minDateDiff = dateDiff
+          monthAgoData = data
+        }
+      }
+
+      // Get current and old prices based on selected column
+      const getCurrentPrice = (data: DailyData) => {
+        if (typeof data[column] === "number") return data[column]
+        if (column === "avg_close" && typeof data.avg_close === "number") return data.avg_close
+        if (column === "avg_open" && typeof data.avg_open === "number") return data.avg_open
+        if (typeof data.avg_close === "number") return data.avg_close // fallback
+        return 0
+      }
+
+      const currentPrice = getCurrentPrice(latestData)
+      const oldPrice = getCurrentPrice(monthAgoData)
+
+      if (currentPrice && oldPrice && oldPrice !== 0) {
+        const changePercent = ((currentPrice - oldPrice) / oldPrice) * 100
+        return {
+          percentage: changePercent,
+          current: currentPrice,
+          old: oldPrice,
+          isPositive: changePercent >= 0,
+        }
+      }
+    }
+
+    return null
   }
 
   // Format currency values
@@ -751,6 +1075,128 @@ export default function Home() {
     }
   }
 
+  // Filter news for selected ticker
+  const getFilteredNews = () => {
+    if (!selectedTicker) return unifiedNews.slice(0, 10)
+
+    return unifiedNews.filter(
+      (news) => news.tickers && Array.isArray(news.tickers) && news.tickers.includes(selectedTicker),
+    )
+  }
+
+  // Get general news (random selection from all news)
+  const getGeneralNews = () => {
+    if (!unifiedNews || unifiedNews.length === 0) return []
+
+    // Create a copy of the array and shuffle it using randomSeed
+    const shuffledNews = [...unifiedNews]
+
+    // Simple seeded random function
+    const seededRandom = (seed: number) => {
+      const x = Math.sin(seed) * 10000
+      return x - Math.floor(x)
+    }
+
+    for (let i = shuffledNews.length - 1; i > 0; i--) {
+      const j = Math.floor(seededRandom(randomSeed + i) * (i + 1))
+      ;[shuffledNews[i], shuffledNews[j]] = [shuffledNews[j], shuffledNews[i]]
+    }
+
+    // Return first 4 random news
+    return shuffledNews.slice(0, 4)
+  }
+
+  // Function to refresh random news
+  const refreshRandomNews = () => {
+    setRandomSeed(Date.now())
+  }
+
+  // Technical Analysis Functions
+  const calculateSMA = (data: number[], period: number): number[] => {
+    const sma: number[] = []
+    for (let i = 0; i < data.length; i++) {
+      if (i < period - 1) {
+        sma.push(NaN)
+      } else {
+        const sum = data.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0)
+        sma.push(sum / period)
+      }
+    }
+    return sma
+  }
+
+  const calculateEMA = (data: number[], period: number): number[] => {
+    const ema: number[] = []
+    const multiplier = 2 / (period + 1)
+
+    for (let i = 0; i < data.length; i++) {
+      if (i === 0) {
+        ema.push(data[i])
+      } else {
+        ema.push(data[i] * multiplier + ema[i - 1] * (1 - multiplier))
+      }
+    }
+    return ema
+  }
+
+  const calculateRSI = (data: number[], period: number = 14): number[] => {
+    const rsi: number[] = []
+    const gains: number[] = []
+    const losses: number[] = []
+
+    for (let i = 1; i < data.length; i++) {
+      const change = data[i] - data[i - 1]
+      gains.push(change > 0 ? change : 0)
+      losses.push(change < 0 ? Math.abs(change) : 0)
+    }
+
+    for (let i = 0; i < gains.length; i++) {
+      if (i < period - 1) {
+        rsi.push(NaN)
+      } else {
+        const avgGain = gains.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0) / period
+        const avgLoss = losses.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0) / period
+        const rs = avgGain / avgLoss
+        rsi.push(100 - (100 / (1 + rs)))
+      }
+    }
+
+    return [NaN, ...rsi] // Add NaN for first data point
+  }
+
+  const calculateBollingerBands = (data: number[], period: number = 20, stdDev: number = 2) => {
+    const sma = calculateSMA(data, period)
+    const upper: number[] = []
+    const lower: number[] = []
+
+    for (let i = 0; i < data.length; i++) {
+      if (i < period - 1) {
+        upper.push(NaN)
+        lower.push(NaN)
+      } else {
+        const slice = data.slice(i - period + 1, i + 1)
+        const mean = sma[i]
+        const variance = slice.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / period
+        const standardDeviation = Math.sqrt(variance)
+
+        upper.push(mean + standardDeviation * stdDev)
+        lower.push(mean - standardDeviation * stdDev)
+      }
+    }
+
+    return { sma, upper, lower }
+  }
+
+  const calculateMACD = (data: number[]) => {
+    const ema12 = calculateEMA(data, 12)
+    const ema26 = calculateEMA(data, 26)
+    const macdLine = ema12.map((val, i) => val - ema26[i])
+    const signalLine = calculateEMA(macdLine.filter((val) => !isNaN(val)), 9)
+    const histogram = macdLine.map((val, i) => val - (signalLine[i] || 0))
+
+    return { macdLine, signalLine: [NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, ...signalLine], histogram }
+  }
+
   const { high, low } = getHighLowData()
 
   useEffect(() => {
@@ -769,35 +1215,150 @@ export default function Home() {
               Fokus Saham
             </h1>
           </div>
-          <Button variant="ghost" size="icon" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-            {theme === "dark" ? <Sun className="h-5 w-5" /> : <MoonStar className="h-5 w-5" />}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? (
+              <Sun className="h-5 w-5" />
+            ) : (
+              <MoonStar className="h-5 w-5" />
+            )}
           </Button>
         </div>
       </header>
 
       {/* Main content */}
       <main className="flex-1 container py-6">
-        {/* General News Section (Always at the top) */}
+        {/* Random News Section (Always at the top) */}
         <div className="mb-8">
-          <h2 className="text-2xl font-bold mb-4">Latest Market News</h2>
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-2xl font-bold">Latest Market News</h2>
+              <p className="text-sm text-muted-foreground">
+                Random selection from market news
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={refreshRandomNews}
+                disabled={newsLoading}
+                variant="outline"
+                size="sm"
+              >
+                🎲 Random News
+              </Button>
+              <Button
+                onClick={fetchUnifiedNews}
+                disabled={newsLoading}
+                variant="outline"
+                size="sm"
+              >
+                {newsLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Loading...
+                  </>
+                ) : (
+                  <>
+                    <Newspaper className="mr-2 h-4 w-4" />
+                    Refresh News
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {generalNews.slice(0, 4).map((news, index) => (
-              <Card key={index} className="overflow-hidden">
+            {getGeneralNews().map((news, index) => (
+              <Card key={news._id || index} className="overflow-hidden">
                 <CardHeader className="pb-2">
-                  <CardTitle className="text-lg">{news.title}</CardTitle>
-                  <CardDescription>{news.published_at}</CardDescription>
+                  <div className="flex justify-between items-start">
+                    <CardTitle className="text-lg">{news.headline}</CardTitle>
+                    <div className="flex gap-2">
+                      <Badge className={`${getSentimentColor(news.sentiment)}`}>
+                        {news.sentiment}
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        {news.source}
+                      </Badge>
+                    </div>
+                  </div>
+                  <CardDescription className="flex items-center gap-2">
+                    <span>{news.published_at}</span>
+                    <span className="text-xs text-muted-foreground">
+                      Confidence: {(news.confidence * 100).toFixed(0)}%
+                    </span>
+                  </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <p className="line-clamp-3">{news.content}</p>
-                  <div className="mt-4">
-                    <a
-                      href={news.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-primary hover:underline text-sm"
-                    >
-                      Read more
-                    </a>
+                  <div className="space-y-3">
+                    <div>
+                      <h3 className="text-sm font-medium text-muted-foreground mb-1">
+                        Summary
+                      </h3>
+                      <p className="text-sm">{news.summary}</p>
+                    </div>
+
+                    {expandedNews.has(news._id || `general-${index}`) && (
+                      <div className="border-t pt-3">
+                        <h3 className="text-sm font-medium text-muted-foreground mb-2">
+                          Full Content
+                        </h3>
+                        <div className="text-sm space-y-2">
+                          <p>{news.content}</p>
+                          <div className="pt-2 border-t">
+                            <a
+                              href={news.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline text-sm font-medium"
+                            >
+                              📰 Read original article →
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center pt-2">
+                      <button
+                        onClick={() => {
+                          const newsId = news._id || `general-${index}`
+                          const newExpanded = new Set(expandedNews)
+                          if (newExpanded.has(newsId)) {
+                            newExpanded.delete(newsId)
+                          } else {
+                            newExpanded.add(newsId)
+                          }
+                          setExpandedNews(newExpanded)
+                        }}
+                        className="text-primary hover:underline text-sm font-medium"
+                      >
+                        {expandedNews.has(news._id || `general-${index}`)
+                          ? "Show less"
+                          : "Read more"}
+                      </button>
+
+                      {news.tickers && news.tickers.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {news.tickers.slice(0, 3).map((ticker, i) => (
+                            <Badge
+                              key={i}
+                              variant="outline"
+                              className="text-xs bg-primary/10"
+                            >
+                              {ticker}
+                            </Badge>
+                          ))}
+                          {news.tickers.length > 3 && (
+                            <Badge variant="outline" className="text-xs">
+                              +{news.tickers.length - 3}
+                            </Badge>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -814,19 +1375,40 @@ export default function Home() {
             Indonesian Tickers
           </h2>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-            {TOP_TICKERS.map((ticker) => (
-              <Button
-                key={ticker.code}
-                variant={selectedTicker === ticker.code ? "default" : "outline"}
-                className="justify-start h-auto py-3"
-                onClick={() => setSelectedTicker(ticker.code)}
-              >
-                <div className="flex flex-col items-start">
-                  <span className="font-bold">{ticker.code}</span>
-                  <span className="text-xs text-muted-foreground truncate max-w-[120px]">{ticker.name}</span>
-                </div>
-              </Button>
-            ))}
+            {TOP_TICKERS.map((ticker) => {
+              const isSelected = selectedTicker === ticker.code
+              const priceChange = getPriceChangeForTicker(ticker.code)
+              
+              return (
+                <Button
+                  key={ticker.code}
+                  variant={isSelected ? "default" : "outline"}
+                  className="justify-start h-auto py-3"
+                  onClick={() => setSelectedTicker(ticker.code)}
+                >
+                  <div className="flex flex-col items-start w-full">
+                    <div className="flex items-center justify-between w-full">
+                      <span className="font-bold">{ticker.code}</span>
+                      {priceChange && (
+                        <span
+                          className={`text-xs px-1 py-0.5 rounded ${
+                            priceChange.isPositive
+                              ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
+                              : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
+                          }`}
+                        >
+                          {priceChange.isPositive ? "+" : ""}
+                          {priceChange.percentage.toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-muted-foreground truncate max-w-[120px]">
+                      {ticker.name}
+                    </span>
+                  </div>
+                </Button>
+              )
+            })}
           </div>
         </div>
 
@@ -852,7 +1434,14 @@ export default function Home() {
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
                   </div>
-                  <Select value={selectedTicker} onValueChange={setSelectedTicker} disabled={loading || tickersLoading}>
+                </div>
+
+                <div>
+                  <h2 className="text-lg font-medium mb-2 flex items-center">
+                    <span className="inline-block w-2 h-2 rounded-full bg-primary mr-2"></span>
+                    Select Ticker
+                  </h2>
+                  <Select value={selectedTicker} onValueChange={setSelectedTicker} disabled={loading}>
                     <SelectTrigger className="border-primary/20">
                       <SelectValue placeholder={tickersLoading ? "Loading tickers..." : "Select a ticker"} />
                     </SelectTrigger>
@@ -909,7 +1498,7 @@ export default function Home() {
                 <div>
                   <h2 className="text-lg font-medium mb-2 flex items-center">
                     <span className="inline-block w-2 h-2 rounded-full bg-primary mr-2"></span>
-                    Time Period
+                    Aggregation Period
                   </h2>
                   <Tabs defaultValue={period} onValueChange={setPeriod} className="w-full">
                     <TabsList className="grid grid-cols-3 w-full">
@@ -951,9 +1540,84 @@ export default function Home() {
           </Card>
         </div>
 
+        {/* Time Frame Controls */}
+        <Card className="bg-card/50 backdrop-blur-sm border-primary/20 mb-6">
+          <CardContent className="pt-6">
+            <div className="space-y-4">
+              <div>
+                <h2 className="text-lg font-medium mb-3 flex items-center">
+                  <span className="inline-block w-2 h-2 rounded-full bg-primary mr-2"></span>
+                  Time Frame
+                </h2>
+                <div className="flex flex-wrap gap-2">
+                  {timeFrameOptions.map((option) => (
+                    <Button
+                      key={option.value}
+                      variant={timeFrame === option.value ? "default" : "outline"}
+                      onClick={() => setTimeFrame(option.value)}
+                      size="sm"
+                      className="min-w-[80px]"
+                    >
+                      {option.label}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Technical Indicators Panel */}
+        <Card className="bg-card/50 backdrop-blur-sm border-primary/20 mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <BarChart3 className="h-5 w-5 mr-2" />
+              Technical Indicators
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowTechnicalIndicators(!showTechnicalIndicators)}
+                className="ml-auto"
+              >
+                {showTechnicalIndicators ? "Hide" : "Show"}
+              </Button>
+            </CardTitle>
+          </CardHeader>
+          {showTechnicalIndicators && (
+            <CardContent>
+              <div className="space-y-3">
+                {technicalIndicators.map((indicator) => (
+                  <div key={indicator.value} className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id={indicator.value}
+                      checked={selectedIndicators.includes(indicator.value)}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedIndicators([...selectedIndicators, indicator.value])
+                        } else {
+                          setSelectedIndicators(selectedIndicators.filter(i => i !== indicator.value))
+                        }
+                      }}
+                      className="rounded border-primary/20"
+                    />
+                    <label htmlFor={indicator.value} className="text-sm cursor-pointer">
+                      {indicator.label}
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          )}
+        </Card>
+
         {/* Main Tabs */}
         {selectedTicker && (
-          <Tabs defaultValue="stockData" className="mb-6" onValueChange={setActiveTab}>
+          <Tabs
+            defaultValue="stockData"
+            className="mb-6"
+            onValueChange={setActiveTab}
+          >
             <TabsList className="grid grid-cols-3 w-full">
               <TabsTrigger value="stockData" className="flex items-center">
                 <LineChart className="h-4 w-4 mr-2" />
@@ -1025,10 +1689,42 @@ export default function Home() {
                       <h2 className="text-xl font-bold flex items-center">
                         <Badge className="mr-2">{selectedTicker}</Badge>
                         <span className="text-lg">{getTickerName(selectedTicker)}</span>
+                        {(() => {
+                          const priceChange = getPriceChangePercentage()
+                          if (priceChange) {
+                            return (
+                              <span
+                                className={`ml-2 px-2 py-1 rounded-full text-sm font-bold ${
+                                  priceChange.isPositive
+                                    ? "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"
+                                    : "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300"
+                                }`}
+                              >
+                                {priceChange.isPositive ? "+" : ""}
+                                {priceChange.percentage.toFixed(2)}%
+                              </span>
+                            )
+                          }
+                          return null
+                        })()}
                       </h2>
                       <p className="text-sm text-muted-foreground">
                         {columns.find((c) => c.value === column)?.label || column} •{" "}
-                        {period.charAt(0).toUpperCase() + period.slice(1)} Data
+                        {period.charAt(0).toUpperCase() + period.slice(1)} Data •{" "}
+                        {timeFrameOptions.find((t) => t.value === timeFrame)?.label}
+                        {(() => {
+                          const priceChange = getPriceChangePercentage()
+                          if (priceChange) {
+                            return (
+                              <span className="ml-2 text-xs">
+                                • vs 30 days ago:{" "}
+                                {priceChange.current.toLocaleString()} vs{" "}
+                                {priceChange.old.toLocaleString()}
+                              </span>
+                            )
+                          }
+                          return null
+                        })()}
                       </p>
                     </div>
 
@@ -1045,7 +1741,7 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <div className="h-[500px] relative">
+                  <div className="h-[700px] relative bg-gray-900 rounded-lg">
                     {loading ? (
                       <div className="flex items-center justify-center h-full">
                         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -1055,52 +1751,102 @@ export default function Home() {
                         data={preparePlotData()}
                         layout={{
                           autosize: true,
-                          height: 450,
-                          margin: { l: 50, r: 50, b: 50, t: 10, pad: 4 },
+                          height: 650,
+                          margin: { l: 60, r: 80, b: 60, t: 20, pad: 4 }, // Increase right margin for volume axis
                           xaxis: {
-                            title: period === "daily" ? "Date" : period === "monthly" ? "Year-Month" : "Year",
-                            gridcolor: theme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
-                            linecolor: theme === "dark" ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)",
-                            tickangle: period === "daily" ? 45 : 0, // Angle the date labels for better readability
+                            title: {
+                              text: period === "daily" ? "" : period === "monthly" ? "Year-Month" : "Year",
+                              font: { color: "#ffffff", size: 12 },
+                            },
+                            gridcolor: "rgba(255,255,255,0.1)",
+                            linecolor: "rgba(255,255,255,0.2)",
+                            tickangle: period === "daily" ? 45 : 0,
+                            domain: [0, 1],
+                            tickfont: { color: "#ffffff", size: 10 },
+                            zerolinecolor: "rgba(255,255,255,0.2)",
+                            showticklabels: period === "daily" ? false : true,
+                            anchor: "y", // Anchor to both y axes
                           },
                           yaxis: {
-                            title: columns.find((c) => c.value === column)?.label || column,
-                            gridcolor: theme === "dark" ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
-                            linecolor: theme === "dark" ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)",
-                            tickformat: ",.2f", // Format with commas and 2 decimal places
-                            showticklabels: true, // Ensure tick labels are visible
-                            showgrid: true, // Show grid lines
-                            zeroline: true, // Show zero line
-                            zerolinecolor: theme === "dark" ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)",
+                            title: {
+                              text: columns.find((c) => c.value === column)?.label || column,
+                              font: { color: "#ffffff", size: 12 },
+                            },
+                            gridcolor: "rgba(255,255,255,0.1)",
+                            linecolor: "rgba(255,255,255,0.2)",
+                            tickformat: ",.0f",
+                            showticklabels: true,
+                            showgrid: true,
+                            zeroline: true,
+                            zerolinecolor: "rgba(255,255,255,0.2)",
                             zerolinewidth: 1,
-                            automargin: true, // Add margin to ensure labels are visible
+                            automargin: true,
+                            domain: [0.35, 1], // Price chart takes upper 65%
+                            tickfont: { color: "#ffffff", size: 10 },
+                            anchor: "x", // Anchor to x axis
+                            side: "left",
                           },
-                          plot_bgcolor: "transparent",
-                          paper_bgcolor: "transparent",
+                          yaxis2: {
+                            title: {
+                              text: "Volume",
+                              font: { color: "#ffffff", size: 12 },
+                            },
+                            gridcolor: "rgba(255,255,255,0.1)",
+                            linecolor: "rgba(255,255,255,0.2)",
+                            tickformat: ".2s",
+                            showticklabels: true,
+                            showgrid: false, // Disable grid for volume to avoid overlap
+                            automargin: true,
+                            domain: [0, 0.3], // Volume chart takes lower 30% for better visibility
+                            tickfont: { color: "#ffffff", size: 10 },
+                            zerolinecolor: "rgba(255,255,255,0.2)",
+                            side: "right", // Put volume axis on the right
+                            overlaying: false, // Make sure it's a separate subplot
+                            anchor: "x",
+                          },
+                          plot_bgcolor: "#111827",
+                          paper_bgcolor: "#111827",
                           font: {
-                            color: theme === "dark" ? "rgba(255,255,255,0.9)" : "rgba(0,0,0,0.9)",
+                            color: "#ffffff",
+                            family: "Inter, system-ui, sans-serif",
                           },
-                          hovermode: "closest",
+                          hovermode: "x unified",
+                          showlegend: true,
+                          legend: {
+                            x: 0.02,
+                            y: 0.98,
+                            bgcolor: "rgba(17, 24, 39, 0.8)",
+                            bordercolor: "rgba(255,255,255,0.2)",
+                            borderwidth: 1,
+                            font: { color: "#ffffff", size: 11 },
+                          },
                         }}
                         config={{
                           responsive: true,
                           displayModeBar: true,
                           displaylogo: false,
                           modeBarButtonsToRemove: ["lasso2d", "select2d", "autoScale2d", "toggleSpikelines"],
+                          toImageButtonOptions: {
+                            format: "png",
+                            filename: `${selectedTicker}_chart`,
+                            height: 650,
+                            width: 1200,
+                            scale: 1,
+                          },
                         }}
                         style={{ width: "100%", height: "100%" }}
                       />
                     ) : (
-                      <div className="flex items-center justify-center h-full text-muted-foreground">
+                      <div className="flex items-center justify-center h-full text-white">
                         No data available for the selected ticker and period
                       </div>
                     )}
 
                     {/* Futuristic overlay elements */}
-                    <div className="absolute top-0 left-0 w-16 h-16 border-l-2 border-t-2 border-primary/30"></div>
-                    <div className="absolute top-0 right-0 w-16 h-16 border-r-2 border-t-2 border-primary/30"></div>
-                    <div className="absolute bottom-0 left-0 w-16 h-16 border-l-2 border-b-2 border-primary/30"></div>
-                    <div className="absolute bottom-0 right-0 w-16 h-16 border-r-2 border-b-2 border-primary/30"></div>
+                    <div className="absolute top-2 left-2 w-12 h-12 border-l-2 border-t-2 border-primary/50"></div>
+                    <div className="absolute top-2 right-2 w-12 h-12 border-r-2 border-t-2 border-primary/50"></div>
+                    <div className="absolute bottom-2 left-2 w-12 h-12 border-l-2 border-b-2 border-primary/50"></div>
+                    <div className="absolute bottom-2 right-2 w-12 h-12 border-r-2 border-b-2 border-primary/50"></div>
                   </div>
                 </CardContent>
               </Card>
@@ -1131,28 +1877,32 @@ export default function Home() {
                           </tr>
                         </thead>
                         <tbody>
-                          {stockData.slice(0, 10).map((item, index) => (
-                            <tr key={index} className="border-b border-primary/5 hover:bg-primary/5">
-                              {period === "daily" && <td className="py-2 px-4">{(item as DailyData).Date || "N/A"}</td>}
-                              {period === "monthly" && (
-                                <>
-                                  <td className="py-2 px-4">{(item as MonthlyData).Year || "N/A"}</td>
-                                  <td className="py-2 px-4">{(item as MonthlyData).Month || "N/A"}</td>
-                                </>
-                              )}
-                              {period === "yearly" && (
-                                <td className="py-2 px-4">{(item as YearlyData).Year || "N/A"}</td>
-                              )}
-                              <td className="py-2 px-4 font-mono">
-                                {typeof item[column] === "number" ? item[column].toFixed(2) : item[column] || "N/A"}
-                              </td>
-                            </tr>
-                          ))}
+                          {filterDataByTimeFrame(stockData)
+                            .slice(0, 10)
+                            .map((item, index) => (
+                              <tr key={index} className="border-b border-primary/5 hover:bg-primary/5">
+                                {period === "daily" && (
+                                  <td className="py-2 px-4">{(item as DailyData).Date || "N/A"}</td>
+                                )}
+                                {period === "monthly" && (
+                                  <>
+                                    <td className="py-2 px-4">{(item as MonthlyData).Year || "N/A"}</td>
+                                    <td className="py-2 px-4">{(item as MonthlyData).Month || "N/A"}</td>
+                                  </>
+                                )}
+                                {period === "yearly" && (
+                                  <td className="py-2 px-4">{(item as YearlyData).Year || "N/A"}</td>
+                                )}
+                                <td className="py-2 px-4 font-mono">
+                                  {typeof item[column] === "number" ? item[column].toFixed(2) : item[column] || "N/A"}
+                                </td>
+                              </tr>
+                            ))}
                         </tbody>
                       </table>
-                      {stockData.length > 10 && (
+                      {filterDataByTimeFrame(stockData).length > 10 && (
                         <div className="text-center text-muted-foreground mt-2">
-                          Showing 10 of {stockData.length} records
+                          Showing 10 of {filterDataByTimeFrame(stockData).length} records
                         </div>
                       )}
                     </div>
@@ -1301,23 +2051,27 @@ export default function Home() {
                 <Card className="bg-card/50 backdrop-blur-sm border-primary/20">
                   <CardContent className="pt-6">
                     <div className="space-y-4">
-                      <div>
-                        <h2 className="text-lg font-medium mb-2 flex items-center">
+                      <div className="flex items-center justify-between">
+                        <h2 className="text-lg font-medium flex items-center">
                           <span className="inline-block w-2 h-2 rounded-full bg-primary mr-2"></span>
                           News for {selectedTicker}
                         </h2>
                         <Button
-                          onClick={fetchTickerNews}
+                          onClick={fetchUnifiedNews}
                           disabled={newsLoading}
-                          className="w-full bg-gradient-to-r from-primary to-blue-500 hover:from-primary/90 hover:to-blue-500/90"
+                          variant="outline"
+                          size="sm"
                         >
                           {newsLoading ? (
                             <>
-                              <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                               Loading...
                             </>
                           ) : (
-                            "Refresh News"
+                            <>
+                              <Newspaper className="mr-2 h-4 w-4" />
+                              Refresh
+                            </>
                           )}
                         </Button>
                       </div>
@@ -1330,9 +2084,9 @@ export default function Home() {
                   <div className="flex items-center justify-center h-40">
                     <Loader2 className="h-8 w-8 animate-spin text-primary" />
                   </div>
-                ) : tickerNews.length > 0 ? (
-                  tickerNews.map((news, index) => (
-                    <Card key={index} className="bg-card/50 backdrop-blur-sm border-primary/20">
+                ) : getFilteredNews().length > 0 ? (
+                  getFilteredNews().map((news, index) => (
+                    <Card key={news._id || index} className="bg-card/50 backdrop-blur-sm border-primary/20">
                       <CardHeader>
                         <div className="flex justify-between items-start">
                           <CardTitle className="text-lg">{news.headline}</CardTitle>
@@ -1340,7 +2094,12 @@ export default function Home() {
                             {news.sentiment} ({(news.confidence * 100).toFixed(0)}%)
                           </Badge>
                         </div>
-                        <CardDescription>{formatDate(news.effective_date)}</CardDescription>
+                        <CardDescription className="flex items-center gap-2">
+                          <span>{news.published_at}</span>
+                          <Badge variant="outline" className="text-xs">
+                            {news.source}
+                          </Badge>
+                        </CardDescription>
                       </CardHeader>
                       <CardContent>
                         <div className="space-y-4">
@@ -1348,16 +2107,56 @@ export default function Home() {
                             <h3 className="text-sm font-medium text-muted-foreground mb-1">Summary</h3>
                             <p>{news.summary}</p>
                           </div>
-                          <div>
-                            <h3 className="text-sm font-medium text-muted-foreground mb-1">Analysis</h3>
-                            <p>{news.reasoning}</p>
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            {news.tickers.map((ticker, i) => (
-                              <Badge key={i} variant="outline" className="bg-primary/10">
-                                {ticker}
-                              </Badge>
-                            ))}
+
+                          {expandedNews.has(news._id || `ticker-${index}`) && (
+                            <div className="border-t pt-4">
+                              <h3 className="text-sm font-medium text-muted-foreground mb-2">Full Content</h3>
+                              <div className="space-y-3">
+                                <p className="text-sm leading-relaxed">{news.content}</p>
+
+                                <div>
+                                  <h3 className="text-sm font-medium text-muted-foreground mb-1">Analysis</h3>
+                                  <p className="text-sm">{news.reasoning}</p>
+                                </div>
+
+                                <div className="pt-3 border-t">
+                                  <a
+                                    href={news.link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center text-primary hover:underline text-sm font-medium"
+                                  >
+                                    📰 Read original article →
+                                  </a>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap gap-2 items-center justify-between">
+                            <div className="flex flex-wrap gap-2">
+                              {news.tickers &&
+                                news.tickers.map((ticker, i) => (
+                                  <Badge key={i} variant="outline" className="bg-primary/10">
+                                    {ticker}
+                                  </Badge>
+                                ))}
+                            </div>
+                            <button
+                              onClick={() => {
+                                const newsId = news._id || `ticker-${index}`
+                                const newExpanded = new Set(expandedNews)
+                                if (newExpanded.has(newsId)) {
+                                  newExpanded.delete(newsId)
+                                } else {
+                                  newExpanded.add(newsId)
+                                }
+                                setExpandedNews(newExpanded)
+                              }}
+                              className="text-primary hover:underline text-sm font-medium"
+                            >
+                              {expandedNews.has(news._id || `ticker-${index}`) ? "Show less" : "Read more"}
+                            </button>
                           </div>
                         </div>
                       </CardContent>
@@ -1378,7 +2177,8 @@ export default function Home() {
       <footer className="border-t py-6 md:py-0 border-primary/10">
         <div className="container flex flex-col items-center justify-between gap-4 md:h-16 md:flex-row">
           <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
-            © 2025 Fokus Saham. Developed by <span className="font-medium text-primary">Hasbi Haqqul Fikri</span>
+            © 2025 Fokus Saham. Developed by{" "}
+            <span className="font-medium text-primary">Kelompok 2</span>
           </p>
           <div className="flex items-center gap-4">
             <p className="text-sm text-muted-foreground">Data provided by MongoDB</p>
